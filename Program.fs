@@ -3,18 +3,20 @@
 
 open System
 
+open FSharp.Charting
 open System.Text.RegularExpressions
 
-
+// =======================================================
+// Helpers
+// =======================================================
 
 module Seq =
    
-
     let normalizeBy foo (x : Option<'a> seq) =
 
-        let (min,max) =  x |> Seq.choose (fun n -> n) 
-                                |> Seq.map foo
-                                |> fun n -> (Seq.min n, Seq.max n)
+        let (min,max) =  x  |> Seq.choose (fun n -> n) 
+                            |> Seq.map foo
+                            |> fun n -> (Seq.min n, Seq.max n)
 
         x |> Seq.map    ( function
                             | Some(z) -> 2.0*((foo z) - min)/(max - min) - 1.0
@@ -22,8 +24,15 @@ module Seq =
                         )
 
     let normalize (x : Option<float> seq) = normalizeBy (fun n -> n) x
-        
+    
 
+let idFunc = (fun n -> n)
+
+
+// =======================================================
+// Titanic data object
+// =======================================================
+        
 module Titanic =
 
     type Passenger =
@@ -71,18 +80,26 @@ module Titanic =
         | Some(true) -> Some(true)
         | _ -> None
     
-    let Pclass p = p.Pclass
-    let Sex p = p.Sex
-    let Age p = p.Age
-    let SibSp p = p.SibSp
-    let Parch p = p.Parch
-    let Ticket p = p.Ticket
-    let Fare p = p.Fare
-    let Cabin p = p.Cabin
-    let Embarked p = p.Embarked
- 
+    let Pclass p    = p.Pclass
+    let Name p      = p.Name
+    let Sex p       = p.Sex
+    let Age p       = p.Age
+    let SibSp p     = p.SibSp
+    let Parch p     = p.Parch
+    let Ticket p    = p.Ticket
+    let Fare p      = p.Fare
+    let Cabin p     = p.Cabin
+    let Embarked p  = p.Embarked
+
+    let takeBy foo value (p : Passenger seq) = 
+        p |> Seq.choose (fun q -> match foo q with | Some(x) -> Some(q) | _ -> None)
+          |> Seq.choose (fun q -> if foo q |> Option.get = value then Some(q) else None)
 
 open Titanic 
+
+// =======================================================
+// Predictor and tester
+// =======================================================
 
 let survivalPredictor (p : Passenger) =
     p.Sex 
@@ -93,7 +110,11 @@ let testPredictor predictor (ps : Passenger seq) =
     Seq.sumBy (fun (p : Passenger) -> if predictor p = p.Survived then 1 else 0) ps
         |> float
         |> fun n -> n / float(Seq.length ps)
-  
+
+// =======================================================
+// Main
+// =======================================================  
+
 [<EntryPoint>]
 let main argv = 
     
@@ -109,6 +130,135 @@ let main argv =
         |> Seq.map (fun n -> n.Split ',')
         |> Seq.map (fun n -> Titanic.Passenger(n))
     
+    let survivors = passengers |> takeBy Survived true
+
+    // Which fields are the most complete (missing the least)
+
+    let numValids foo = fun (p : Passenger seq) ->  Seq.map foo p |> (Seq.choose idFunc) |> Seq.length
+        
+    [
+           numValids Pclass      ;
+           numValids Name        ;
+           numValids Sex         ;
+           numValids Age         ;
+           numValids SibSp       ;
+           numValids Parch       ;
+           numValids Ticket      ;
+           numValids Fare        ;
+           numValids Cabin       ;
+           numValids Embarked    ;
+    ] 
+        |> List.map (fun foo -> foo passengers)
+        |> printfn "%A"
+    
+    // [891; 891; 891; 689; 891; 891; 661; 891; 204; 889]
+    // Cabin  -> 204 valid
+    // Age    -> 689 valid 
+    // Ticket -> 661 valid
+    // otherwise most are valid
+
+    // From the fields with least valids, Age will most likely be very useful field
+    // We check next how useful Age, Ticket and Cabin are
+
+    // Let us plot ratio of survivors to total passengers with a given age
+    
+    let Count foo (p : Passenger seq) =
+        p |> Seq.choose foo
+          |> Seq.countBy idFunc
+
+    let ratioAge s t = 
+        seq { 
+                for (age,count) in s ->
+                    t 
+                    |> Seq.find (fun (a,_) -> a = age)
+                    |> snd
+                    |> fun tot -> (age, float count / float tot)
+            }
+    
+    let survivorsOfAgeMale = survivors  |> takeBy Sex "male" |> Count Age
+    let totalOfAgeMale     = passengers |> takeBy Sex "male" |> Count Age
+    let columnsMale = 
+        ratioAge survivorsOfAgeMale totalOfAgeMale
+        |> Chart.Column
+
+    let survivorsOfAgeFem = survivors  |> takeBy Sex "female" |> Count Age
+    let totalOfAgeFem     = passengers |> takeBy Sex "female" |> Count Age
+    let columnsFem = 
+        ratioAge survivorsOfAgeFem totalOfAgeFem
+        |> Chart.Column
+
+    [columnsMale; columnsFem] |> Chart.Combine |> Chart.Show
+
+    // There's not enough data to confidently make statements about individual ages
+    // There is however a suggestive trend and it is also intuitive that age groups should
+    // matter. So let us divide ages into categories (after some trial and error)
+    // young : 0 - 17
+    // adult : 18 - 29
+    // elderly : 30 - ...
+    // Seems to give the strongest contrast
+
+    let (|Young|_|) n   = if n < 18 then Some(n) else None
+    let (|Adult|_|) n   = if n < 30 then Some(n) else None
+    let (|Elderly|_|) n = Some(n)
+
+    let ageToYAE = function  | Young _ -> 1  
+                             | Adult _ -> 2  
+                             | _       -> 3 
+    let getYAE =
+        Seq.choose Age
+        >> Seq.countBy ageToYAE
+        >> Seq.sort
+        >> Seq.map ( snd >> float )
+
+    let ratioSurvivedYAE = 
+        Seq.map2 (/) <| getYAE survivors  <| getYAE passengers
+        |> Seq.zip ["young\n < 18 "; "adult\n < 30 "; "elderly"]
+
+//    printfn "%A" <| getYAE passengers
+//    printfn "%A" ratioSurvivedYAE
+
+//    ratioSurvivedYAE         
+//        |> Chart.Column
+//        |> Chart.Show
+
+    // We should definitely imputate the age field where data is missing,
+    // since it is a nice predictor for survival
+
+    // For fun let us try the above analysis but for females only
+
+    let FemaleSurvivors = 
+        survivors |> takeBy Sex "female"
+
+    let Females =
+        passengers |> takeBy Sex "female"
+    
+    let ratioSurvivedYAEFem = 
+        Seq.map2 (/) <| getYAE FemaleSurvivors  <| getYAE Females
+        |> Seq.zip ["young\n < 18 "; "adult\n < 30 "; "elderly"]
+
+    ratioSurvivedYAEFem       
+        |> Chart.Column
+        |> Chart.Show
+
+    printfn "%A" <| getYAE Females
+
+    // And finaly also males
+    let MaleSurvivors = 
+        survivors |> takeBy Sex "male"
+
+    let Males =
+        passengers |> takeBy Sex "male"
+    
+    let ratioSurvivedYAEMales = 
+        Seq.map2 (/) <| getYAE MaleSurvivors  <| getYAE Males
+        |> Seq.zip ["young\n < 18 "; "adult\n < 30 "; "elderly"]
+
+    ratioSurvivedYAEMales      
+        |> Chart.Column
+        |> Chart.Show
+
+    printfn "%A" <| getYAE Males
+
     // Normalizing passengers
     
     let normPclass =
