@@ -6,6 +6,18 @@ open System
 open FSharp.Charting
 open System.Text.RegularExpressions
 
+open FSharp.Data
+
+// It is easier to work with Option types so we make everything options (even where there is no missing for certain fields like Name
+// It would be nice if there was an easier way to do this 
+type DataSet = CsvProvider<     "train.csv", 
+                                Schema="Age=int option, Survived=bool option,Name=string option, Fare=int option, Parch=int option, Sex=string option, SibSp=int option, PClass=int option, PassengerId=int option", 
+                                PreferOptionals=true                                >
+
+type Passenger = DataSet.Row
+
+//(p : Passenger).Fa
+
 // =======================================================
 // Helpers
 // =======================================================
@@ -24,72 +36,22 @@ module Seq =
                         )
 
     let normalize (x : Option<float> seq) = normalizeBy (fun n -> n) x
-    
 
 let idFunc = (fun n -> n)
-
-
-// =======================================================
-// Titanic data object
-// =======================================================
         
 module Titanic =
 
-    type Passenger =
-        {
-            PassengerId : Option<int>     
-            Survived    : Option<bool>        
-            Pclass      : Option<int>          
-            Name        : Option<string>        
-            Sex         : Option<string>          
-            Age         : Option<int>              
-            SibSp       : Option<int>             
-            Parch       : Option<int>              
-            Ticket      : Option<int>          
-            Fare        : Option<float>            
-            Cabin       : Option<string>       
-            Embarked    : Option<char>    
-        } 
-
-    let TryToOption (b : bool, p) = if b then Some(p) else None
-    let strToOption (s : string)  = if s.Length = 0 then None else Some(s)
-    let IntToBool = function 
-                        | Some(1) -> Some(true) 
-                        | Some(0) -> Some(false)
-                        | _ -> None 
-    
-
-    let Passenger (s : string seq) = 
-        {
-            PassengerId = Seq.item 0  s |> System.Int32.TryParse |> TryToOption     
-            Survived    = Seq.item 1  s |> System.Int32.TryParse |> TryToOption |> IntToBool
-            Pclass      = Seq.item 2  s |> System.Int32.TryParse |> TryToOption            
-            Name        = Seq.item 3  s |> strToOption                           
-            Sex         = Seq.item 4  s |> strToOption                               
-            Age         = Seq.item 5  s |> System.Int32.TryParse |> TryToOption           
-            SibSp       = Seq.item 6  s |> System.Int32.TryParse |> TryToOption            
-            Parch       = Seq.item 7  s |> System.Int32.TryParse |> TryToOption          
-            Ticket      = Seq.item 8  s |> System.Int32.TryParse |> TryToOption                                        
-            Fare        = Seq.item 9  s |> System.Double.TryParse|> TryToOption          
-            Cabin       = Seq.item 10 s |> strToOption                                 
-            Embarked    = Seq.item 11 s |> System.Char.TryParse  |> TryToOption    
-        }   
-
-    let Survived (p : Passenger) = 
-        match p.Survived with
-        | Some(true) -> Some(true)
-        | _ -> None
-    
-    let Pclass p    = p.Pclass
-    let Name p      = p.Name
-    let Sex p       = p.Sex
-    let Age p       = p.Age
-    let SibSp p     = p.SibSp
-    let Parch p     = p.Parch
-    let Ticket p    = p.Ticket
-    let Fare p      = p.Fare
-    let Cabin p     = p.Cabin
-    let Embarked p  = p.Embarked
+    let Survived    (p : Passenger) = p.Survived
+    let Pclass      (p : Passenger) = p.Pclass
+    let Name        (p : Passenger) = p.Name
+    let Sex         (p : Passenger) = p.Sex
+    let Age         (p : Passenger) = p.Age
+    let SibSp       (p : Passenger) = p.SibSp
+    let Parch       (p : Passenger) = p.Parch
+    let Ticket      (p : Passenger) = p.Ticket
+    let Fare        (p : Passenger) = p.Fare
+    let Cabin       (p : Passenger) = p.Cabin
+    let Embarked    (p : Passenger) = p.Embarked
 
     let takeBy foo value (p : Passenger seq) = 
         p |> Seq.choose (fun q -> match foo q with | Some(x) -> Some(q) | _ -> None)
@@ -117,18 +79,9 @@ let testPredictor predictor (ps : Passenger seq) =
 
 [<EntryPoint>]
 let main argv = 
-    
-    // Encapsulating the data in a nice way
-    
-    let replaceCommasInSubstrings s : string =
-        Regex.Replace(s, @"[""].+[""]", fun (m : Match) -> String.filter ((<>) ',') m.Value )  
 
-    let passengers  =
-        System.IO.File.ReadLines("train.csv")
-        |> Seq.tail
-        |> Seq.map replaceCommasInSubstrings
-        |> Seq.map (fun n -> n.Split ',')
-        |> Seq.map (fun n -> Titanic.Passenger(n))
+    let data = new DataSet()
+    let passengers = data.Rows
     
     let survivors = passengers |> takeBy Survived true
 
@@ -260,55 +213,55 @@ let main argv =
     printfn "%A" <| getYAE Males
 
     // Normalizing passengers
-    
-    let normPclass =
-        passengers
-        |> Seq.map Pclass
-        |> Seq.normalizeBy float
-        |> fun n -> (Seq.min n, Seq.max n)
-        |> printfn "%A"
-
-    let normSexs =
-        passengers
-        |> Seq.map Sex
-        |> Seq.map (function | Some("female") -> +1.0 | Some("male") -> -1.0 | _ -> 0.0)
-        |> fun n -> (Seq.min n, Seq.max n)
-        |> printfn "%A"
-       
-    let normSibSp =
-        passengers
-        |> Seq.map SibSp
-        |> Seq.normalizeBy float
-        |> fun n -> (Seq.min n, Seq.max n)
-        |> printfn "%A"
-
-    let normParch =
-        passengers
-        |> Seq.map Parch
-        |> Seq.normalizeBy float
-        |> fun n -> (Seq.min n, Seq.max n)
-        |> printfn "%A"
-
-    let normTickets =
-        passengers
-        |> Seq.map Ticket
-        |> Seq.normalizeBy float
-        |> fun n -> (Seq.min n, Seq.max n)
-        |> printfn "%A"
-
-    let normFares =
-        passengers
-        |> Seq.map Fare 
-        |> Seq.normalize
-        |> fun n -> (Seq.min n, Seq.max n)
-        |> printfn "%A"
-
-    let normEmbarks =
-        passengers
-        |> Seq.map Embarked
-        |> Seq.normalizeBy (int >> float)
-        |> fun n -> (Seq.min n, Seq.max n)
-        |> printfn "%A"
+//    
+//    let normPclass =
+//        passengers
+//        |> Seq.map Pclass
+//        |> Seq.normalizeBy float
+//        |> fun n -> (Seq.min n, Seq.max n)
+//        |> printfn "%A"
+//
+//    let normSexs =
+//        passengers
+//        |> Seq.map Sex
+//        |> Seq.map (function | Some("female") -> +1.0 | Some("male") -> -1.0 | _ -> 0.0)
+//        |> fun n -> (Seq.min n, Seq.max n)
+//        |> printfn "%A"
+//       
+//    let normSibSp =
+//        passengers
+//        |> Seq.map SibSp
+//        |> Seq.normalizeBy float
+//        |> fun n -> (Seq.min n, Seq.max n)
+//        |> printfn "%A"
+//
+//    let normParch =
+//        passengers
+//        |> Seq.map Parch
+//        |> Seq.normalizeBy float
+//        |> fun n -> (Seq.min n, Seq.max n)
+//        |> printfn "%A"
+//
+//    let normTickets =
+//        passengers
+//        |> Seq.map Ticket
+//        |> Seq.normalizeBy float
+//        |> fun n -> (Seq.min n, Seq.max n)
+//        |> printfn "%A"
+//
+//    let normFares =
+//        passengers
+//        |> Seq.map Fare 
+//        |> Seq.normalize
+//        |> fun n -> (Seq.min n, Seq.max n)
+//        |> printfn "%A"
+//
+//    let normEmbarks =
+//        passengers
+//        |> Seq.map Embarked
+//        |> Seq.normalizeBy (int >> float)
+//        |> fun n -> (Seq.min n, Seq.max n)
+//        |> printfn "%A"
 
 //    let normCabins =
 //        passengers
